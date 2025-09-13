@@ -146,7 +146,4 @@ Built with **Coral Protocol** for secure agent orchestration, **Nebius AI Studio
 3. Add tests for new functionality
 4. Submit pull request
 
-## License
 
-MIT License - see LICENSE file for details
->>>>>>> a32c9f9 (Initial project upload)
