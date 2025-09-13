@@ -1,6 +1,6 @@
 # Agentic Research Assistant
 
-![Agentic Research Assistant Banner](https://via.placeholder.com/1200x400?text=Agentic+Research+Assistant) <!-- Replace with your project banner -->
+![Agentic Research Assistant Banner](https://github.com/AmiraSayedMohamed/Agentic-Research-Assistant/blob/master/Research-assistcane-website-image.jpg) <!-- Replace with your project banner -->
 
 [![GitHub Stars](https://img.shields.io/github/stars/yourusername/agentic-research-assistant?style=social)](https://github.com/yourusername/agentic-research-assistant)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
