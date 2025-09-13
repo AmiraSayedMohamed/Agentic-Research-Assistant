@@ -1,40 +1,53 @@
-<<<<<<< HEAD
-# Agentic-Research-Assistant
-a multi-agent system designed to streamline academic research by efficiently finding, summarizing, synthesizing, and presenting information from papers. This blueprint must include detailed specifications, architecture diagrams (described in text or Mermaid syntax), code skeletons 
-=======
 # Agentic Research Assistant
 
-A multi-agent system designed to streamline academic research by efficiently finding, summarizing, synthesizing, and presenting information from papers.
+![Agentic Research Assistant Banner](https://via.placeholder.com/1200x400?text=Agentic+Research+Assistant) <!-- Replace with your project banner -->
 
-## Architecture
+[![GitHub Stars](https://img.shields.io/github/stars/yourusername/agentic-research-assistant?style=social)](https://github.com/yourusername/agentic-research-assistant)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Hackathon: Multi-Agent Hackathon](https://img.shields.io/badge/Hackathon-Multi--Agent%20Hackathon-blueviolet)](https://example.com/hackathon) <!-- Update with hackathon link -->
+[![Demo](https://img.shields.io/badge/Demo-Live%20Here-brightgreen)](https://agentic-research-assistant.vercel.app) <!-- Update with demo link -->
 
-\`\`\`mermaid
-graph TB
-    A[User Query] --> B[Search Agent]
-    B --> C[Summary Agent]
-    C --> D[Synthesizer Agent]
-    D --> E[Voice Agent]
-    D --> F[Monetization Agent]
-    
-    B --> G[(Academic APIs)]
-    G --> H[arXiv]
-    G --> I[Semantic Scholar]
-    G --> J[OpenAlex]
-    G --> K[GitHub]
-    
-    C --> L[Nebius AI Studio]
-    D --> L
-    E --> M[ElevenLabs API]
-    F --> N[Crossmint API]
-    
-    O[PDF Upload] --> P[PDF Analysis Agent]
-    P --> Q[Citation Mapping]
-    P --> R[RAG Pipeline]
-    
-    S[Frontend Dashboard] --> T[WebSocket Updates]
-    T --> U[Progress Tracking]
-    T --> V[Real-time Results]
-\`\`\`
+## 🚀 Project Overview
+
+**Agentic Research Assistant** is a state-of-the-art multi-agent AI system designed to streamline academic research for the **Multi-Agent Hackathon**. It automates the time-consuming tasks of searching, summarizing, synthesizing, and presenting academic papers, delivering a cohesive report with audio narration, optional NFT monetization, and a stunning interactive dashboard.
+
+Built with **Coral Protocol** for secure agent orchestration, **Nebius AI Studio** for scalable LLM inference, **ElevenLabs** for voice synthesis, and **Crossmint** for payments/NFTs, this project is a production-ready, modular solution optimized for hackathon demos and real-world scalability.
+
+**Problem Solved**: Researchers spend hours manually searching and synthesizing papers. We automate this process with intelligent agents, producing human-like reports, plagiarism checks, and enhanced PDF analysis.
+
+## ✨ Key Features
+
+- **Multi-Agent System**:
+  - **Search & Retrieval Agent**: Queries academic APIs (arXiv, Semantic Scholar, OpenAlex, GitHub) concurrently. Outputs standardized JSON: `{title, authors, abstract, publication_date, doi/url, full_text_url}`.
+  - **Summary Agent**: Generates 200-300 word summaries for up to 10 papers using LLMs (e.g., GPT-4 or Llama 3 via Nebius). Includes relevance scores (0-100%).
+  - **Synthesizer Agent**: Produces 800-1500 word reports with themes, conflicts, gaps, and recommendations. Uses IEEE-style citations [1].
+  - **Voice Presentation Agent**: Converts reports to natural audio via ElevenLabs (voice: "Adam", speed: 1.0). Outputs MP3 with section timestamps.
+  - **Monetization Agent**: Supports payments ($0.99/query via Crossmint/Stripe) or NFT minting (Solana, with metadata: topic, timestamp, hash). Tracks usage in SQLite.
+
+- **PDF Analysis**:
+  - Upload PDFs for parsing with PyMuPDF (sentences, bounding boxes).
+  - Citation mapping via regex; RAG pipeline with FAISS and sentence-transformers.
+  - LLM-driven gap detection (e.g., "Methodological gap: [2] lacks validation").
+
+- **Humanize & Plagiarism Check**:
+  - Humanizes text with LLM for natural tone; scores via perplexity (lower = more human).
+  - Plagiarism detection via cosine similarity (>0.85 threshold).
+  - On-demand rephrasing with 3 variants and human-scores.
+
+- **Interactive Dashboard**:
+  - Built with **React 18 + Vite**, **Tailwind CSS**, and **shadcn/ui** for a professional, responsive UI.
+  - Real-time progress via WebSockets.
+  - Tabs: Summaries (accordion cards), Report (Markdown with clickable citations), Gaps (sortable table), PDF Viewer (highlight citations), Audio (waveform player), Plagiarism (risk gauge).
+  - Visuals: Word cloud, relevance pie chart, human/plagiarism score bars.
+  - Features: Drag-and-drop PDF upload, export to PDF/CSV, dark mode, animations.
+
+- **Orchestration & Security**:
+  - **Coral Protocol** for zero-trust agent calls.
+  - **FastAPI** backend with Celery for async tasks, Redis queue, Postgres for jobs.
+  - Rate limiting, input sanitization, GDPR-compliant data handling.
+
+- **Scalability**: Async API calls, Nebius for AI scaling, modular agents for Coral Registry reuse.
+
 
 ## Features
 
@@ -63,39 +76,9 @@ graph TB
 - Python 3.11+
 - Docker & Docker Compose
 
-### Environment Variables
-Create `.env` file:
-\`\`\`bash
-NEBIUS_API_KEY=your_nebius_key
-ELEVENLABS_API_KEY=your_elevenlabs_key
-CROSSMINT_API_KEY=your_crossmint_key
-NEXT_PUBLIC_API_URL=http://localhost:8000
-\`\`\`
 
-### Installation
 
-1. **Clone and setup**:
-\`\`\`bash
-git clone <repository>
-cd agentic-research-assistant
-\`\`\`
 
-2. **Start with Docker**:
-\`\`\`bash
-docker-compose up -d
-\`\`\`
-
-3. **Or run locally**:
-\`\`\`bash
-# Backend
-cd backend
-pip install -r requirements.txt
-uvicorn app:app --reload
-
-# Frontend
-npm install
-npm run dev
-\`\`\`
 
 ### Usage
 
