@@ -128,9 +128,17 @@ class PDFUploadHandler:
             # Generate unique filename
             file_id = str(uuid.uuid4())
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            # Sanitize and shorten original filename to avoid extremely long paths on Windows
             safe_filename = self._sanitize_filename(filename)
-            
-            unique_filename = f"{timestamp}_{file_id}_{safe_filename}"
+            name, ext = os.path.splitext(safe_filename)
+            if not ext:
+                ext = '.pdf'
+            # limit name length to 60 chars to keep total path reasonably short
+            if len(name) > 60:
+                name = name[:60]
+
+            # Use a compact unique filename on disk (timestamp + uuid + ext)
+            unique_filename = f"{timestamp}_{file_id}{ext}"
             file_path = os.path.join(self.upload_dir, unique_filename)
             
             # Save file asynchronously

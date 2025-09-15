@@ -59,6 +59,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
+import Chatbot from "./chatbot";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import {
@@ -207,66 +208,81 @@ export default function ResearchDashboard({ jobId, query }: DashboardProps) {
     flaggedSections: [],
   })
 
-  // WebSocket connection for real-time updates
-  const { isConnected, lastMessage } = useWebSocket(`ws://localhost:8000/ws/${jobId}`, {
-    onMessage: (message) => {
-      handleWebSocketMessage(message)
-    },
-  })
 
-  const handleWebSocketMessage = (message: any) => {
-    switch (message.type) {
-      case "progress_update":
-        updateProgress(message.data)
-        break
-      case "summaries_ready":
-        setSummaries(message.data.summaries)
-        break
-      case "synthesis_complete":
-        setSynthesisReport(message.data.report)
-        setGaps(message.data.gaps)
-        break
-      case "audio_ready":
-        // Handle audio completion
-        break
+  // Agentic Assistant API integration
+  async function runAgenticResearch(query: string, maxResults: number, minYear: number, userEmail?: string) {
+    setProgress((prev) => prev.map((step, i) => i === 0 ? { ...step, status: "in-progress", message: "Searching papers..." } : step));
+    // 1. Search
+    const searchRes = await fetch("http://localhost:8000/agentic-assistant/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, max_results: maxResults, min_year: minYear })
+    });
+    const searchData = await searchRes.json();
+    const papers = searchData.papers || [];
+    setProgress((prev) => prev.map((step, i) => i === 0 ? { ...step, status: "completed", message: "Search complete", progress: 100 } : i === 1 ? { ...step, status: "in-progress", message: "Summarizing papers..." } : step));
+
+    // 2. Summarize
+    const summarizeRes = await fetch("http://localhost:8000/agentic-assistant/summarize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ papers })
+    });
+    const summarizeData = await summarizeRes.json();
+    const summaries = summarizeData.summaries || [];
+    setSummaries(summaries.map((s: any, idx: number) => ({
+      id: String(idx),
+      title: s.original_paper.title,
+      authors: s.original_paper.authors,
+      relevanceScore: 90,
+      summary: s.summary_text,
+      keyFindings: [],
+      methodology: "",
+      strengths: [],
+      weaknesses: [],
+      doi: s.original_paper.url,
+      source: s.original_paper.source_db
+    })));
+    setProgress((prev) => prev.map((step, i) => i === 1 ? { ...step, status: "completed", message: "Summarization complete", progress: 100 } : i === 2 ? { ...step, status: "in-progress", message: "Synthesizing report..." } : step));
+
+    // 3. Synthesize
+    const synthesizeRes = await fetch("http://localhost:8000/agentic-assistant/synthesize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ summaries })
+    });
+    const synthesizeData = await synthesizeRes.json();
+    setSynthesisReport({ report: synthesizeData.report });
+    setProgress((prev) => prev.map((step, i) => i === 2 ? { ...step, status: "completed", message: "Synthesis complete", progress: 100 } : i === 3 ? { ...step, status: "in-progress", message: "Generating voice..." } : step));
+
+    // 4. Voice
+    const voiceRes = await fetch("http://localhost:8000/agentic-assistant/voice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ report: synthesizeData.report })
+    });
+    if (voiceRes.ok) {
+      // Example: set audio player state with received audio
+      // const audioBlob = await voiceRes.blob();
+      // setAudioPlayer({ ...audioPlayer, audioUrl: URL.createObjectURL(audioBlob) });
     }
+    setProgress((prev) => prev.map((step, i) => i === 3 ? { ...step, status: "completed", message: "Voice complete", progress: 100 } : i === 4 ? { ...step, status: "in-progress", message: "Finalizing..." } : step));
+
+    // 5. NFT Mint (if email provided)
+    if (userEmail) {
+      const nftRes = await fetch("http://localhost:8000/agentic-assistant/nft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report: synthesizeData.report, user_email: userEmail })
+      });
+      const nftData = await nftRes.json();
+      // Example: show NFT minting status
+      // setNftStatus(nftData.result);
+    }
+    setProgress((prev) => prev.map((step, i) => i === 4 ? { ...step, status: "completed", message: "Workflow complete", progress: 100 } : step));
   }
 
-  // Fetch additional backend data for gaps, metrics, plagiarism, audio, PDF, NFT
-  useEffect(() => {
-    async function fetchAdditionalData() {
-      try {
-        // Gaps and themes are now set from backend in job status polling
-        // Fetch plagiarism data
-        const plagRes = await fetch(`http://localhost:8000/plagiarism_check?text=${encodeURIComponent(synthesisReport?.full_text || "")}`)
-        if (plagRes.ok) {
-          const plagData = await plagRes.json()
-          setPlagiarismData({
-            overallRisk: plagData.overall_risk?.replace(/[^0-9]/g, "") || 8,
-            humanScore: plagData.human_score || 92,
-            flaggedSections: plagData.flagged_sections || [],
-          })
-        }
-        // Fetch audio data
-        // Example: GET /audio/{job_id} (implement backend endpoint)
-        // const audioRes = await fetch(`http://localhost:8000/audio/${jobId}`)
-        // if (audioRes.ok) { ... setAudioPlayer(...) }
-        // Fetch PDF highlights and stats
-        // Example: GET /pdf_stats
-        // const pdfStatsRes = await fetch(`http://localhost:8000/pdf_stats`)
-        // if (pdfStatsRes.ok) { ... update PDF stats UI ... }
-        // Fetch NFT minting status
-        // Example: GET /nft_status/{job_id}
-        // const nftRes = await fetch(`http://localhost:8000/nft_status/${jobId}`)
-        // if (nftRes.ok) { ... update NFT UI ... }
-      } catch (err) {
-        // Handle error
-      }
-    }
-    if (synthesisReport) {
-      fetchAdditionalData()
-    }
-  }, [synthesisReport, jobId])
+  // Example usage: runAgenticResearch(query, 5, 2020, "user@example.com")
 
   // Chart data
   const relevanceData = summaries.map((paper, index) => ({
@@ -297,7 +313,7 @@ export default function ResearchDashboard({ jobId, query }: DashboardProps) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+  <div className="min-h-screen bg-gray-50 p-6 relative">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
@@ -307,10 +323,7 @@ export default function ResearchDashboard({ jobId, query }: DashboardProps) {
               <p className="text-gray-600">Query: "{query}"</p>
             </div>
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                <div className={`w-3 h-3 rounded-full ${isConnected ? "bg-green-500" : "bg-red-500"}`} />
-                <span className="text-sm text-gray-600">{isConnected ? "Connected" : "Disconnected"}</span>
-              </div>
+              {/* Connection status removed: now using direct API calls */}
               <Button variant="outline" size="sm">
                 <Share className="h-4 w-4 mr-2" />
                 Share
@@ -905,6 +918,8 @@ export default function ResearchDashboard({ jobId, query }: DashboardProps) {
           </div>
         </div>
       </div>
+      {/* Chatbot Icon/Button */}
+      <Chatbot />
     </div>
   )
 }

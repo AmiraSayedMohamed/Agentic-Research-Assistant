@@ -32,14 +32,15 @@ class SearchAgent:
         
         # Create search tasks for different APIs
         tasks = [
-            self._search_arxiv(query, max_papers // 3),
-            self._search_groq(query, max_papers // 3),
-            self._search_openalex(query, max_papers // 3),
+            self._search_arxiv(query, max_papers // 4),
+            self._search_groq(query, max_papers // 4),
+            self._search_openalex(query, max_papers // 4),
+            self._search_semantic_scholar(query, max_papers // 4),
         ]
-        
+
         # Execute searches concurrently
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # Consolidate results and handle errors
         all_papers = []
         for i, result in enumerate(results):
@@ -47,12 +48,60 @@ class SearchAgent:
                 logger.error(f"Search API {i} failed: {result}")
                 continue
             all_papers.extend(result)
-        
+
         # Deduplicate by DOI/title and sort by relevance
         unique_papers = self._deduplicate_papers(all_papers)
         sorted_papers = sorted(unique_papers, key=lambda x: x.get('relevance_score', 0), reverse=True)
-        
+
         return sorted_papers[:max_papers]
+    async def _search_semantic_scholar(self, query: str, max_results: int) -> List[Dict[str, Any]]:
+        """Search Semantic Scholar API using provided API key and respect rate limit (1 req/sec)"""
+        import os
+        import time
+        api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+        url = "https://api.semanticscholar.org/graph/v1/paper/search"
+        headers = {
+            "x-api-key": api_key,
+            "Content-Type": "application/json"
+        }
+        params = {
+            "query": query,
+            "limit": max_results,
+            "fields": "title,authors,abstract,year,url"
+        }
+        try:
+            # Rate limit: 1 request per second
+            if not hasattr(self, '_last_semantic_scholar_call'):
+                self._last_semantic_scholar_call = 0
+            now = time.time()
+            wait_time = 1.0 - (now - self._last_semantic_scholar_call)
+            if wait_time > 0:
+                await asyncio.sleep(wait_time)
+            self._last_semantic_scholar_call = time.time()
+            async with self.session.get(url, headers=headers, params=params) as response:
+                if response.status != 200:
+                    logger.error(f"Semantic Scholar API error: {response.status}")
+                    return []
+                data = await response.json()
+                papers = []
+                for item in data.get("data", []):
+                    authors = [a.get("name", "") for a in item.get("authors", [])]
+                    paper = {
+                        "paper_id": f"semanticscholar_{item.get('paperId', '')}",
+                        "title": item.get("title", ""),
+                        "authors": authors,
+                        "abstract": item.get("abstract", ""),
+                        "publication_date": str(item.get("year", "")),
+                        "source": "Semantic Scholar",
+                        "url": item.get("url", ""),
+                        "full_text_url": item.get("url", ""),
+                        "relevance_score": self._calculate_relevance(item.get("title", "") + ' ' + item.get("abstract", ""), query)
+                    }
+                    papers.append(paper)
+                return papers
+        except Exception as e:
+            logger.error(f"Semantic Scholar search failed: {e}")
+            return []
     
     async def _search_arxiv(self, query: str, max_results: int) -> List[Dict[str, Any]]:
         """Search arXiv API with XML parsing"""

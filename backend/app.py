@@ -1,21 +1,32 @@
-
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Form
+from pydantic import BaseModel
+from fastapi import FastAPI, Request, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
-import asyncio
-import uuid
-import json
+from typing import Optional, List, Dict, Any
+import uuid, asyncio
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_community.embeddings import HuggingFaceEmbeddings
+import tempfile
 from datetime import datetime
 import logging
 from agents.coral_orchestrator import CoralOrchestrator
 from agents.pdf_upload_handler import PDFUploadHandler
 import os
+from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
-from agents.summary_agent import SummaryAgent
-from agents.voice_agent import text_to_speech
+from agents.agentic_assistant import (
+    SearchAndRetrievalAgent,
+    SummaryAgent,
+    SynthesizerAgent,
+    VoicePresentationAgent,
+    MonetizationAgent,
+    Paper,
+    PaperSummary
+)
 
 
 
@@ -26,35 +37,155 @@ logger = logging.getLogger(__name__)
 orchestrator = None
 pdf_handler = None
 
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    global orchestrator, pdf_handler
-    nebius_api_key = os.getenv("NEBIUS_API_KEY")
-    if not nebius_api_key:
-        logger.warning("NEBIUS_API_KEY not found - using mock responses")
-    
-    orchestrator = CoralOrchestrator(nebius_api_key)
-    await orchestrator.initialize_agents()
-    
-    # Initialize PDF handler
-    pdf_handler = PDFUploadHandler(
-        upload_dir="uploads",
-        nebius_api_key=nebius_api_key
-    )
-    
-    logger.info("Application startup complete")
-    
-    yield
-    
-    # Shutdown
-    logger.info("Application shutdown")
+    try:
+        # Startup
+        global orchestrator, pdf_handler
+        nebius_api_key = os.getenv("NEBIUS_API_KEY")
+        if not nebius_api_key:
+            logger.warning("NEBIUS_API_KEY not found - using mock responses")
+
+        # Commented out agent initializations for debugging
+        orchestrator = CoralOrchestrator(nebius_api_key)
+        # Initialize agents in background to avoid blocking startup (external API keys may be missing)
+        try:
+            asyncio.create_task(orchestrator.initialize_agents())
+        except Exception:
+            logger.exception("Failed to start orchestrator initialization in background")
+        pdf_handler = PDFUploadHandler(
+            upload_dir=os.path.join(os.path.dirname(__file__), "uploads"),
+            nebius_api_key=nebius_api_key
+        )
+
+        logger.info("Application startup complete")
+        yield
+        # Shutdown
+        logger.info("Application shutdown")
+    except Exception as e:
+        logger.error(f"Error during lifespan startup: {e}")
+        raise
+
 
 app = FastAPI(
     title="Agentic Research Assistant API", 
     version="1.0.0",
     lifespan=lifespan
 )
+# ========== Chatbot PDF Q&A Endpoint ========== 
+class ChatPDFRequest(BaseModel):
+    question: str
+    paper_id: str = None
+
+@app.post("/api/chat_pdf")
+async def chat_pdf_endpoint(request: ChatPDFRequest):
+    # Use the PDFUploadHandler (initialized at app startup) so we reuse the same
+    # extraction/index built during upload processing. This avoids loading/encoding
+    # the PDF again here and provides consistent behavior.
+    try:
+        if not pdf_handler:
+            raise RuntimeError("PDF handler not initialized on server")
+
+        # Locate latest uploaded PDF in the backend uploads directory
+        pdf_dir = os.path.join(os.path.dirname(__file__), "uploads")
+        if not os.path.isdir(pdf_dir):
+            return {"answer": "No uploaded PDFs directory found on server."}
+
+        pdf_files = [f for f in os.listdir(pdf_dir) if f.lower().endswith('.pdf')]
+        if not pdf_files:
+            return {"answer": "No PDF uploaded."}
+
+        pdf_files_sorted = sorted(pdf_files, reverse=True)
+        pdf_path = os.path.join(pdf_dir, pdf_files_sorted[0])
+
+        # Ensure analyzer is initialized and has embeddings/index (if available)
+        if not pdf_handler.pdf_analyzer:
+            return {"answer": "PDF analyzer is not initialized. Please upload a PDF first."}
+
+        # If there's no built index yet, attempt to run a quick analysis (best-effort)
+        try:
+            # query the analyzer for an answer (it will use RAG if available)
+            result = await pdf_handler.search_pdf_content(pdf_path, request.question, top_k=5)
+            if result.get('success'):
+                # Compose a simple answer from retrieved snippets
+                snippets = result.get('results', [])
+                if not snippets:
+                    return {"answer": "No relevant passages found in the uploaded PDF."}
+                context = "\n\n".join([s.get('text', '') for s in snippets])
+                # Return the concatenated context as a fallback answer (frontend can show sources)
+                return {"answer": context, "sources": snippets}
+            else:
+                return {"answer": f"Search failed: {result.get('error', 'unknown error')}."}
+        except Exception as e:
+            logger.exception("Error during PDF search/answer")
+            return {"answer": f"Error while searching PDF: {str(e)}"}
+
+    except Exception as e:
+        logger.exception("chat_pdf endpoint error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Add CORS middleware for frontend-backend communication
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ========== Agentic Assistant Endpoints ==========
+class SearchRequest(BaseModel):
+    query: str
+    max_results: int = 5
+    min_year: Optional[int] = None
+
+class SummarizeRequest(BaseModel):
+    papers: List[Dict[str, Any]]
+
+class SynthesizeRequest(BaseModel):
+    summaries: List[Dict[str, Any]]
+
+class VoiceRequest(BaseModel):
+    report: str
+
+class NFTRequest(BaseModel):
+    report: str
+    user_email: str
+
+@app.post("/agentic-assistant/search")
+async def agentic_search(request: SearchRequest):
+    agent = SearchAndRetrievalAgent()
+    papers = agent.search(request.query, request.max_results, request.min_year)
+    return {"papers": [paper.__dict__ for paper in papers]}
+
+@app.post("/agentic-assistant/summarize")
+async def agentic_summarize(request: SummarizeRequest):
+    papers = [Paper(**p) for p in request.papers]
+    agent = SummaryAgent()
+    summaries = agent.summarize(papers)
+    return {"summaries": [dict(original_paper=s.original_paper.__dict__, summary_text=s.summary_text) for s in summaries]}
+
+@app.post("/agentic-assistant/synthesize")
+async def agentic_synthesize(request: SynthesizeRequest):
+    summaries = [PaperSummary(Paper(**s["original_paper"]), s["summary_text"]) for s in request.summaries]
+    agent = SynthesizerAgent()
+    report = agent.synthesize(summaries)
+    return {"report": report}
+
+@app.post("/agentic-assistant/voice")
+async def agentic_voice(request: VoiceRequest):
+    agent = VoicePresentationAgent()
+    audio_bytes = agent.present(request.report)
+    return StreamingResponse(iter([audio_bytes]), media_type="audio/mpeg")
+
+@app.post("/agentic-assistant/nft")
+async def agentic_nft(request: NFTRequest):
+    agent = MonetizationAgent()
+    result = agent.monetize(request.report, request.user_email)
+    return {"result": result}
 
 # Crossmint NFT minting endpoint
 from agents.crossmint_agent import mint_nft
@@ -64,14 +195,7 @@ async def mint_nft_endpoint(request: Request):
     result = mint_nft(metadata)
     return result
 
-# Voice synthesis endpoint
-@app.post("/synthesize_voice")
-async def synthesize_voice(request: Request):
-    data = await request.json()
-    text = data.get("text")
-    voice = data.get("voice", "Rachel")
-    audio_bytes = text_to_speech(text, voice)
-    return StreamingResponse(iter([audio_bytes]), media_type="audio/mpeg")
+
 
 
 @app.post("/summarize")

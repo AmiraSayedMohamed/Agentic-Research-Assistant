@@ -8,6 +8,7 @@ import { Upload, Search, Brain, Mic, Coins, FileText } from "lucide-react"
 import PDFUpload from "@/components/pdf-upload"
 import { motion } from "framer-motion"
 import { AuthHeader } from "@/components/auth-header"
+import Chatbot from "@/components/chatbot";
 
 export default function HomePage() {
   const [query, setQuery] = useState("")
@@ -37,7 +38,7 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-500 via-purple-600 to-purple-800">
+    <div className="min-h-screen bg-gradient-to-br from-blue-500 via-purple-600 to-purple-800 relative">
       <nav className="container mx-auto px-4 py-4 flex justify-between items-center">
         <div className="text-white font-bold text-xl">Research Assistant</div>
         <AuthHeader />
@@ -190,7 +191,7 @@ export default function HomePage() {
           initial={{ opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 0.4 }}
-          className="flex justify-center gap-4"
+          className="flex justify-center gap-4 mt-16"
         >
           <div className="w-full max-w-md mx-auto">
             <PDFUpload />
@@ -204,6 +205,8 @@ export default function HomePage() {
           </Button>
         </motion.div>
       </div>
+      {/* Chatbot Icon/Button */}
+      <Chatbot />
     </div>
   )
 }
