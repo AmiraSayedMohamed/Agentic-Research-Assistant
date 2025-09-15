@@ -1,27 +1,68 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
+# ----------------------------
+# Node.js (Next.js project)
+# ----------------------------
 /node_modules
-
-# next.js
 /.next/
 /out/
-
-# production
 /build
 
-# debug
+# Debug / logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
+# Env files
 .env*
-
-# vercel
 .vercel
 
-# typescript
+# TypeScript
 *.tsbuildinfo
 next-env.d.ts
+
+# ----------------------------
+# Python (FastAPI + ML models)
+# ----------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.env/
+venv/
+ENV/
+env/
+.venv/
+
+tools/env/
+
+# Jupyter notebooks
+.ipynb_checkpoints
+
+# OS system files
+.DS_Store
+Thumbs.db
+
+# IDE configs
+.vscode/
+.idea/
+
+# HuggingFace / Transformers cache
+~/.cache/
+.huggingface/
+transformers_cache/
+torch_cache/
+
+# Data & embeddings (can get large, can be regenerated)
+plagiarism_humanizer_api/db_texts.json
+plagiarism_humanizer_api/db_embeddings.npy
+
+# Logs
+*.log
+
+# Python build artifacts
+*.egg-info/
+dist/
+build/
