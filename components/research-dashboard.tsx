@@ -209,77 +209,179 @@ export default function ResearchDashboard({ jobId, query }: DashboardProps) {
   })
 
 
-  // Agentic Assistant API integration
-  async function runAgenticResearch(query: string, maxResults: number, minYear: number, userEmail?: string) {
-    setProgress((prev) => prev.map((step, i) => i === 0 ? { ...step, status: "in-progress", message: "Searching papers..." } : step));
-    // 1. Search
-    const searchRes = await fetch("http://localhost:8000/agentic-assistant/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, max_results: maxResults, min_year: minYear })
-    });
-    const searchData = await searchRes.json();
-    const papers = searchData.papers || [];
-    setProgress((prev) => prev.map((step, i) => i === 0 ? { ...step, status: "completed", message: "Search complete", progress: 100 } : i === 1 ? { ...step, status: "in-progress", message: "Summarizing papers..." } : step));
-
-    // 2. Summarize
-    const summarizeRes = await fetch("http://localhost:8000/agentic-assistant/summarize", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ papers })
-    });
-    const summarizeData = await summarizeRes.json();
-    const summaries = summarizeData.summaries || [];
-    setSummaries(summaries.map((s: any, idx: number) => ({
-      id: String(idx),
-      title: s.original_paper.title,
-      authors: s.original_paper.authors,
-      relevanceScore: 90,
-      summary: s.summary_text,
-      keyFindings: [],
-      methodology: "",
-      strengths: [],
-      weaknesses: [],
-      doi: s.original_paper.url,
-      source: s.original_paper.source_db
-    })));
-    setProgress((prev) => prev.map((step, i) => i === 1 ? { ...step, status: "completed", message: "Summarization complete", progress: 100 } : i === 2 ? { ...step, status: "in-progress", message: "Synthesizing report..." } : step));
-
-    // 3. Synthesize
-    const synthesizeRes = await fetch("http://localhost:8000/agentic-assistant/synthesize", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ summaries })
-    });
-    const synthesizeData = await synthesizeRes.json();
-    setSynthesisReport({ report: synthesizeData.report });
-    setProgress((prev) => prev.map((step, i) => i === 2 ? { ...step, status: "completed", message: "Synthesis complete", progress: 100 } : i === 3 ? { ...step, status: "in-progress", message: "Generating voice..." } : step));
-
-    // 4. Voice
-    const voiceRes = await fetch("http://localhost:8000/agentic-assistant/voice", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ report: synthesizeData.report })
-    });
-    if (voiceRes.ok) {
-      // Example: set audio player state with received audio
-      // const audioBlob = await voiceRes.blob();
-      // setAudioPlayer({ ...audioPlayer, audioUrl: URL.createObjectURL(audioBlob) });
+  // New Research API integration
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null)
+  const [isResearching, setIsResearching] = useState(false)
+  const [hasStarted, setHasStarted] = useState(false)
+  
+  // Auto-start research when component loads
+  useEffect(() => {
+    if (!hasStarted && query) {
+      setHasStarted(true)
+      runResearchWorkflow(query, 5, 2020)
     }
-    setProgress((prev) => prev.map((step, i) => i === 3 ? { ...step, status: "completed", message: "Voice complete", progress: 100 } : i === 4 ? { ...step, status: "in-progress", message: "Finalizing..." } : step));
-
-    // 5. NFT Mint (if email provided)
-    if (userEmail) {
-      const nftRes = await fetch("http://localhost:8000/agentic-assistant/nft", {
+  }, [query, hasStarted])
+  
+  async function runResearchWorkflow(query: string, maxResults: number = 5, minYear?: number, userEmail?: string) {
+    try {
+      setIsResearching(true)
+      setProgress((prev) => prev.map((step, i) => i === 0 ? { ...step, status: "in-progress", message: "Starting research..." } : step));
+      
+      // Start research job
+      const startRes = await fetch("http://127.0.0.1:8000/api/research/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ report: synthesizeData.report, user_email: userEmail })
+        body: JSON.stringify({ 
+          query, 
+          max_results: maxResults, 
+          min_year: minYear,
+          user_email: userEmail,
+          options: {
+            use_summary: true,
+            use_synthesis: true,
+            use_voice: true,
+            use_nft: !!userEmail
+          }
+        })
       });
-      const nftData = await nftRes.json();
-      // Example: show NFT minting status
-      // setNftStatus(nftData.result);
+      
+      if (!startRes.ok) {
+        throw new Error(`Failed to start research: ${startRes.statusText}`)
+      }
+      
+      const startData = await startRes.json();
+      const jobId = startData.job_id;
+      setCurrentJobId(jobId);
+      
+      // Poll for status updates
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`http://127.0.0.1:8000/api/research/status/${jobId}`);
+          if (!statusRes.ok) {
+            clearInterval(pollInterval);
+            return;
+          }
+          
+          const statusData = await statusRes.json();
+          
+          // Update progress based on job status
+          if (statusData.progress) {
+            const progressSteps = Object.entries(statusData.progress);
+            setProgress((prev) => prev.map((step, i) => {
+              const progressKey = ['search', 'summary', 'synthesis', 'voice', 'monetization'][i];
+              const progressInfo = statusData.progress[progressKey];
+              
+              if (progressInfo) {
+                return {
+                  ...step,
+                  status: progressInfo.status === 'completed' ? 'completed' : 
+                          progressInfo.status === 'pending' ? 'pending' : 'in-progress',
+                  message: progressInfo.message || step.message,
+                  progress: progressInfo.status === 'completed' ? 100 : 
+                           progressInfo.status === 'pending' ? 0 : 50
+                };
+              }
+              return step;
+            }));
+          }
+          
+          // Handle completion
+          if (statusData.status === 'completed' && statusData.results) {
+            clearInterval(pollInterval);
+            setIsResearching(false);
+            
+            // Process results
+            const results = statusData.results;
+            
+            // Set papers/summaries
+            if (results.summaries) {
+              setSummaries(results.summaries.map((s: any, idx: number) => ({
+                id: String(idx),
+                title: s.original_paper.title,
+                authors: s.original_paper.authors,
+                relevanceScore: Math.floor(Math.random() * 20) + 80, // Mock relevance score
+                summary: s.summary_text,
+                keyFindings: [], // Could be extracted from summary
+                methodology: "", // Could be extracted from paper
+                strengths: [],
+                weaknesses: [],
+                doi: s.original_paper.url,
+                source: s.original_paper.source_db
+              })));
+            }
+            
+            // Set synthesis report
+            if (results.synthesized_report) {
+              setSynthesisReport({ report: results.synthesized_report });
+            }
+            
+            // Update all progress to completed
+            setProgress((prev) => prev.map(step => ({
+              ...step,
+              status: "completed",
+              message: "Completed successfully",
+              progress: 100
+            })));
+            
+          } else if (statusData.status === 'error') {
+            clearInterval(pollInterval);
+            setIsResearching(false);
+            setProgress((prev) => prev.map((step, i) => i === 0 ? { 
+              ...step, 
+              status: "error", 
+              message: statusData.progress?.error?.message || "Research failed"
+            } : step));
+          }
+          
+        } catch (error) {
+          console.error('Error polling research status:', error);
+          clearInterval(pollInterval);
+          setIsResearching(false);
+        }
+      }, 2000); // Poll every 2 seconds
+      
+      // Stop polling after 5 minutes
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        setIsResearching(false);
+      }, 300000);
+      
+    } catch (error) {
+      console.error('Error starting research:', error);
+      setIsResearching(false);
+      setProgress((prev) => prev.map((step, i) => i === 0 ? { 
+        ...step, 
+        status: "error", 
+        message: `Failed to start research: ${error}`
+      } : step));
     }
-    setProgress((prev) => prev.map((step, i) => i === 4 ? { ...step, status: "completed", message: "Workflow complete", progress: 100 } : step));
+  }
+  
+  // Function to download audio
+  async function downloadAudio() {
+    if (!currentJobId) return;
+    
+    try {
+      const audioRes = await fetch(`http://127.0.0.1:8000/api/research/audio/${currentJobId}`, {
+        method: "POST"
+      });
+      
+      if (audioRes.ok) {
+        const audioBlob = await audioRes.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        
+        // Create download link
+        const a = document.createElement('a');
+        a.href = audioUrl;
+        a.download = 'research_report.mp3';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(audioUrl);
+      }
+    } catch (error) {
+      console.error('Error downloading audio:', error);
+    }
   }
 
   // Example usage: runAgenticResearch(query, 5, 2020, "user@example.com")
@@ -323,11 +425,33 @@ export default function ResearchDashboard({ jobId, query }: DashboardProps) {
               <p className="text-gray-600">Query: "{query}"</p>
             </div>
             <div className="flex items-center gap-4">
-              {/* Connection status removed: now using direct API calls */}
+              <Button 
+                onClick={() => runResearchWorkflow(query, 5, 2020)}
+                disabled={isResearching}
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                {isResearching ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Researching...
+                  </>
+                ) : (
+                  <>
+                    <Brain className="h-4 w-4 mr-2" />
+                    Start Research
+                  </>
+                )}
+              </Button>
               <Button variant="outline" size="sm">
                 <Share className="h-4 w-4 mr-2" />
                 Share
               </Button>
+              {synthesisReport?.report && (
+                <Button variant="outline" size="sm" onClick={downloadAudio}>
+                  <Volume2 className="h-4 w-4 mr-2" />
+                  Download Audio
+                </Button>
+              )}
             </div>
           </div>
         </motion.div>

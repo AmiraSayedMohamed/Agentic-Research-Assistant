@@ -12,18 +12,16 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 import tempfile
 from datetime import datetime
 import logging
+import io
 from agents.coral_orchestrator import CoralOrchestrator
 from agents.pdf_upload_handler import PDFUploadHandler
 import os
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
-from agents.agentic_assistant import (
-    SearchAndRetrievalAgent,
-    SummaryAgent,
-    SynthesizerAgent,
-    VoicePresentationAgent,
-    MonetizationAgent,
+from agents.research_agents import (
+    ResearchOrchestrator,
+    ResearchResult,
     Paper,
     PaperSummary
 )
@@ -50,12 +48,9 @@ async def lifespan(app: FastAPI):
             logger.warning("NEBIUS_API_KEY not found - using mock responses")
 
         # Commented out agent initializations for debugging
-        orchestrator = CoralOrchestrator(nebius_api_key)
-        # Initialize agents in background to avoid blocking startup (external API keys may be missing)
-        try:
-            asyncio.create_task(orchestrator.initialize_agents())
-        except Exception:
-            logger.exception("Failed to start orchestrator initialization in background")
+        # Skip orchestrator initialization for now to avoid startup hangs
+        orchestrator = None
+        logger.info("Orchestrator initialization skipped for faster startup")
         pdf_handler = PDFUploadHandler(
             upload_dir=os.path.join(os.path.dirname(__file__), "uploads"),
             nebius_api_key=nebius_api_key
@@ -70,11 +65,28 @@ async def lifespan(app: FastAPI):
         raise
 
 
+# Initialize global variables
+orchestrator = None
+pdf_handler = None
+
 app = FastAPI(
     title="Agentic Research Assistant API", 
-    version="1.0.0",
-    lifespan=lifespan
+    version="1.0.0"
 )
+
+# Initialize PDF handler on first request
+@app.on_event("startup")
+async def startup_event():
+    global pdf_handler
+    try:
+        nebius_api_key = os.getenv("NEBIUS_API_KEY")
+        pdf_handler = PDFUploadHandler(
+            upload_dir=os.path.join(os.path.dirname(__file__), "uploads"),
+            nebius_api_key=nebius_api_key
+        )
+        logger.info("PDF handler initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize PDF handler: {e}")
 # ========== Chatbot PDF Q&A Endpoint ========== 
 class ChatPDFRequest(BaseModel):
     question: str
@@ -105,23 +117,23 @@ async def chat_pdf_endpoint(request: ChatPDFRequest):
         if not pdf_handler.pdf_analyzer:
             return {"answer": "PDF analyzer is not initialized. Please upload a PDF first."}
 
-        # If there's no built index yet, attempt to run a quick analysis (best-effort)
+        # Use the analyzer's ask_question method which includes Gemini LLM integration
         try:
-            # query the analyzer for an answer (it will use RAG if available)
-            result = await pdf_handler.search_pdf_content(pdf_path, request.question, top_k=5)
-            if result.get('success'):
-                # Compose a simple answer from retrieved snippets
-                snippets = result.get('results', [])
-                if not snippets:
-                    return {"answer": "No relevant passages found in the uploaded PDF."}
-                context = "\n\n".join([s.get('text', '') for s in snippets])
-                # Return the concatenated context as a fallback answer (frontend can show sources)
-                return {"answer": context, "sources": snippets}
+            # Use ask_question method which does RAG + Gemini synthesis
+            result = await pdf_handler.pdf_analyzer.ask_question(request.question, top_k=8)
+            
+            if result.get('answer'):
+                return {
+                    "answer": result['answer'],
+                    "sources": result.get('sources', []),
+                    "context": result.get('context', '')
+                }
             else:
-                return {"answer": f"Search failed: {result.get('error', 'unknown error')}."}
+                return {"answer": "No relevant information found in the uploaded PDF."}
+                
         except Exception as e:
-            logger.exception("Error during PDF search/answer")
-            return {"answer": f"Error while searching PDF: {str(e)}"}
+            logger.exception("Error during PDF question answering")
+            return {"answer": f"Error while processing question: {str(e)}"}
 
     except Exception as e:
         logger.exception("chat_pdf endpoint error")
@@ -136,77 +148,196 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ========== Agentic Assistant Endpoints ==========
-class SearchRequest(BaseModel):
+# ========== Research Paper Search Endpoints ==========
+class ResearchRequest(BaseModel):
     query: str
     max_results: int = 5
     min_year: Optional[int] = None
+    user_email: Optional[str] = None
+    options: Optional[Dict[str, bool]] = None
 
-class SummarizeRequest(BaseModel):
-    papers: List[Dict[str, Any]]
+class ResearchStatus(BaseModel):
+    job_id: str
+    status: str
+    progress: Dict[str, Any]
+    results: Optional[Dict[str, Any]] = None
 
-class SynthesizeRequest(BaseModel):
-    summaries: List[Dict[str, Any]]
+# Initialize research orchestrator
+research_orchestrator = None
 
-class VoiceRequest(BaseModel):
-    report: str
+@app.post("/api/research/start")
+async def start_research(request: ResearchRequest, background_tasks: BackgroundTasks):
+    """Start a new research paper search and analysis job"""
+    global research_orchestrator
+    
+    try:
+        # Initialize orchestrator if not already done
+        if not research_orchestrator:
+            nebius_api_key = os.getenv("NEBIUS_API_KEY")
+            gemini_api_key = os.getenv("GOOGLE_API_KEY")
+            
+            if not nebius_api_key:
+                raise HTTPException(status_code=500, detail="NEBIUS_API_KEY not configured")
+            
+            research_orchestrator = ResearchOrchestrator(nebius_api_key, gemini_api_key)
+        
+        # Generate job ID
+        job_id = str(uuid.uuid4())
+        
+        # Initialize job status
+        job_status = {
+            "job_id": job_id,
+            "status": "started",
+            "progress": {
+                "search": {"status": "pending", "message": "Initializing paper search"},
+                "summary": {"status": "pending", "message": "Waiting for search results"},
+                "synthesis": {"status": "pending", "message": "Waiting for summaries"},
+                "voice": {"status": "pending", "message": "Waiting for synthesis"},
+                "monetization": {"status": "pending", "message": "Waiting for completion"}
+            },
+            "results": None,
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat()
+        }
+        
+        # Store job status
+        research_jobs[job_id] = job_status
+        
+        # Start background processing
+        background_tasks.add_task(process_research_job, job_id, request)
+        
+        return {"job_id": job_id, "status": "started", "message": "Research job started successfully"}
+        
+    except Exception as e:
+        logger.error(f"Failed to start research job: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-class NFTRequest(BaseModel):
-    report: str
-    user_email: str
+async def process_research_job(job_id: str, request: ResearchRequest):
+    """Process research job using the new research orchestrator"""
+    try:
+        job = research_jobs[job_id]
+        
+        # Update job status to processing
+        job["status"] = "processing"
+        job["updated_at"] = datetime.now().isoformat()
+        
+        # Set default options if not provided
+        options = request.options or {
+            'use_summary': True,
+            'use_synthesis': True,
+            'use_voice': False,
+            'use_nft': False
+        }
+        
+        # Execute research workflow
+        logger.info(f"Starting research for job {job_id}: {request.query}")
+        
+        result = await research_orchestrator.conduct_research(
+            query=request.query,
+            max_results=request.max_results,
+            min_year=request.min_year,
+            user_email=request.user_email,
+            options=options
+        )
+        
+        # Convert result to serializable format
+        serializable_result = {
+            "query": result.query,
+            "papers": [
+                {
+                    "title": p.title,
+                    "authors": p.authors,
+                    "abstract": p.abstract,
+                    "url": p.url,
+                    "publication_year": p.publication_year,
+                    "source_db": p.source_db
+                } for p in result.papers
+            ],
+            "summaries": [
+                {
+                    "original_paper": {
+                        "title": s.original_paper.title,
+                        "authors": s.original_paper.authors,
+                        "publication_year": s.original_paper.publication_year,
+                        "source_db": s.original_paper.source_db
+                    },
+                    "summary_text": s.summary_text
+                } for s in result.summaries
+            ],
+            "synthesized_report": result.synthesized_report,
+            "has_audio": result.audio_bytes is not None,
+            "nft_status": result.nft_status,
+            "email_status": result.email_status
+        }
+        
+        # Update job with results
+        job["results"] = serializable_result
+        job["status"] = "completed"
+        job["updated_at"] = datetime.now().isoformat()
+        
+        # Update all progress steps to completed
+        for step in job["progress"]:
+            job["progress"][step]["status"] = "completed"
+            job["progress"][step]["message"] = "Completed successfully"
+        
+        logger.info(f"Research job {job_id} completed successfully")
+        
+    except Exception as e:
+        logger.error(f"Error processing research job {job_id}: {str(e)}")
+        job["status"] = "error"
+        job["progress"]["error"] = {"message": str(e)}
+        job["updated_at"] = datetime.now().isoformat()
 
-@app.post("/agentic-assistant/search")
-async def agentic_search(request: SearchRequest):
-    agent = SearchAndRetrievalAgent()
-    papers = agent.search(request.query, request.max_results, request.min_year)
-    return {"papers": [paper.__dict__ for paper in papers]}
+@app.get("/api/research/status/{job_id}")
+async def get_research_status(job_id: str):
+    """Get research job status and results"""
+    if job_id not in research_jobs:
+        raise HTTPException(status_code=404, detail="Research job not found")
+    
+    return research_jobs[job_id]
 
-@app.post("/agentic-assistant/summarize")
-async def agentic_summarize(request: SummarizeRequest):
-    papers = [Paper(**p) for p in request.papers]
-    agent = SummaryAgent()
-    summaries = agent.summarize(papers)
-    return {"summaries": [dict(original_paper=s.original_paper.__dict__, summary_text=s.summary_text) for s in summaries]}
-
-@app.post("/agentic-assistant/synthesize")
-async def agentic_synthesize(request: SynthesizeRequest):
-    summaries = [PaperSummary(Paper(**s["original_paper"]), s["summary_text"]) for s in request.summaries]
-    agent = SynthesizerAgent()
-    report = agent.synthesize(summaries)
-    return {"report": report}
-
-@app.post("/agentic-assistant/voice")
-async def agentic_voice(request: VoiceRequest):
-    agent = VoicePresentationAgent()
-    audio_bytes = agent.present(request.report)
-    return StreamingResponse(iter([audio_bytes]), media_type="audio/mpeg")
-
-@app.post("/agentic-assistant/nft")
-async def agentic_nft(request: NFTRequest):
-    agent = MonetizationAgent()
-    result = agent.monetize(request.report, request.user_email)
-    return {"result": result}
+@app.post("/api/research/audio/{job_id}")
+async def get_research_audio(job_id: str):
+    """Get audio presentation for completed research job"""
+    if job_id not in research_jobs:
+        raise HTTPException(status_code=404, detail="Research job not found")
+    
+    job = research_jobs[job_id]
+    if job["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Research job not completed yet")
+    
+    # Generate audio from synthesized report if not already done
+    try:
+        global research_orchestrator
+        if not research_orchestrator:
+            raise HTTPException(status_code=500, detail="Research orchestrator not initialized")
+        
+        report = job["results"]["synthesized_report"]
+        audio_bytes = await research_orchestrator.voice_agent.present(report)
+        
+        if not audio_bytes:
+            raise HTTPException(status_code=500, detail="Failed to generate audio")
+        
+        return StreamingResponse(
+            io.BytesIO(audio_bytes), 
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": "attachment; filename=research_report.mp3"}
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to generate audio for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Crossmint NFT minting endpoint
-from agents.crossmint_agent import mint_nft
-@app.post("/mint_nft")
-async def mint_nft_endpoint(request: Request):
-    metadata = await request.json()
-    result = mint_nft(metadata)
-    return result
-
-
-
-
-@app.post("/summarize")
-async def summarize_endpoint(request: Request):
-    data = await request.json()
-    papers = data.get("papers", [])
-    query = data.get("query", "")
-    agent = SummaryAgent(api_key=os.getenv("NEBIUS_API_KEY"))
-    async with agent as summary_agent:
-        summaries = await summary_agent.summarize_papers(papers, query)
-    return {"summaries": summaries}
+try:
+    from agents.crossmint_agent import mint_nft
+    @app.post("/mint_nft")
+    async def mint_nft_endpoint(request: Request):
+        metadata = await request.json()
+        result = mint_nft(metadata)
+        return result
+except ImportError:
+    logger.warning("Crossmint agent not available - NFT minting disabled")
 
 # CORS middleware
 app.add_middleware(

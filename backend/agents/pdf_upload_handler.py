@@ -19,7 +19,10 @@ class PDFUploadHandler:
     def __init__(self, upload_dir: str = "uploads", nebius_api_key: str = None):
         self.upload_dir = upload_dir
         self.nebius_api_key = nebius_api_key
-        self.pdf_analyzer = PDFAnalysisAgent(nebius_api_key) if nebius_api_key else None
+        # Initialize PDF analyzer with Google API key for Gemini integration
+        import os
+        google_api_key = os.getenv("GOOGLE_API_KEY")
+        self.pdf_analyzer = PDFAnalysisAgent(google_api_key) if google_api_key else PDFAnalysisAgent()
         self.max_file_size = 50 * 1024 * 1024  # 50MB
         self.allowed_extensions = {'.pdf'}
         
@@ -46,7 +49,9 @@ class PDFUploadHandler:
             
             # Initialize PDF analyzer if not already done
             if not self.pdf_analyzer:
-                self.pdf_analyzer = PDFAnalysisAgent(self.nebius_api_key)
+                import os
+                google_api_key = os.getenv("GOOGLE_API_KEY")
+                self.pdf_analyzer = PDFAnalysisAgent(google_api_key) if google_api_key else PDFAnalysisAgent()
             
             await self.pdf_analyzer.initialize_embeddings()
             
