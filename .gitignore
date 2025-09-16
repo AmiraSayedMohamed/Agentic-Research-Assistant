@@ -24,4 +24,13 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
+# Ignore virtual environments
+.venv/
+venv/
+backend/.venv/
+
+# Ignore environment variable files
+.env
+backend/.env
+
 next-env.d.ts
