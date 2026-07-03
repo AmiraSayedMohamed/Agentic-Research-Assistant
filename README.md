@@ -5,8 +5,7 @@
 [![GitHub Stars](https://img.shields.io/github/stars/yourusername/agentic-research-assistant?style=social)](https://github.com/yourusername/agentic-research-assistant)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Hackathon: Multi-Agent Hackathon](https://img.shields.io/badge/Hackathon-Multi--Agent%20Hackathon-blueviolet)](https://example.com/hackathon) <!-- Update with hackathon link -->
-[![Demo](https://img.shields.io/badge/Demo-Live%20Here-brightgreen)](https://agentic-research-assistant.vercel.app) <!-- Update with demo link -->
-
+[![Demo](https://img.shields.io/badge/Demo-Live%20Here-brightgreen)](https://agentic-research-assistant.vercel.app) <!-- Update with demo link
 ## 🚀 Project Overview
 
 **Agentic Research Assistant** is a state-of-the-art multi-agent AI system designed to streamline academic research for the **Multi-Agent Hackathon**. It automates the time-consuming tasks of searching, summarizing, synthesizing, and presenting academic papers, delivering a cohesive report with audio narration, optional NFT monetization, and a stunning interactive dashboard.
